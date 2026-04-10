@@ -21,28 +21,13 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows
-            runs_on: windows-latest
-            artifact_name: palworld-save-analysis
-            output_dir: dist\win32-x64
-            archive_ext: zip
-          - platform: linux
-            runs_on: ubuntu-latest
-            artifact_name: palworld-save-analysis
-            output_dir: dist/linux-x86_64
-            archive_ext: tar.gz
-
+  build-windows:
     if: >-
       github.event_name == 'release' ||
-      github.event.inputs.platform == 'both' ||
-      github.event.inputs.platform == matrix.platform
+      github.event.inputs.platform == 'windows' ||
+      github.event.inputs.platform == 'both'
 
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: windows-latest
 
     steps:
       - name: 检出代码
@@ -56,23 +41,12 @@ jobs:
           cache-dependency-path: tools/requirements-build.txt
 
       - name: 执行 Windows 打包
-        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           pwsh -ExecutionPolicy Bypass -File .\scripts\build.ps1
 
-      - name: 执行 Linux 打包
-        if: matrix.platform == 'linux'
-        shell: bash
-        env:
-          EXTRA_PIP_PACKAGES: git+https://github.com/MRHRTZ/pyooz.git
-        run: |
-          chmod +x ./scripts/build.sh
-          ./scripts/build.sh
-
       - name: 生成 Windows 发布压缩包
-        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -89,8 +63,50 @@ jobs:
           "ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "ARTIFACT_PATH=$artifactPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: 上传到 Release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ github.event.release.tag_name }}" "$ARTIFACT_PATH" --clobber
+
+      - name: 上传工作流产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_PATH }}
+          if-no-files-found: error
+
+  build-linux:
+    if: >-
+      github.event_name == 'release' ||
+      github.event.inputs.platform == 'linux' ||
+      github.event.inputs.platform == 'both'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: tools/requirements-build.txt
+
+      - name: 执行 Linux 打包
+        shell: bash
+        env:
+          EXTRA_PIP_PACKAGES: git+https://github.com/MRHRTZ/pyooz.git
+        run: |
+          chmod +x ./scripts/build.sh
+          ./scripts/build.sh
+
       - name: 生成 Linux 发布压缩包
-        if: matrix.platform == 'linux'
         shell: bash
         run: |
           set -euo pipefail
