@@ -5,13 +5,44 @@ on:
     types:
       - published
       - prereleased
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 选择需要构建的平台
+        required: true
+        default: both
+        type: choice
+        options:
+          - windows
+          - linux
+          - both
 
 permissions:
   contents: write
 
 jobs:
-  build-and-upload:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runs_on: windows-latest
+            artifact_name: palworld-save-analysis
+            output_dir: dist\win32-x64
+            archive_ext: zip
+          - platform: linux
+            runs_on: ubuntu-latest
+            artifact_name: palworld-save-analysis
+            output_dir: dist/linux-x86_64
+            archive_ext: tar.gz
+
+    if: >-
+      github.event_name == 'release' ||
+      github.event.inputs.platform == 'both' ||
+      github.event.inputs.platform == matrix.platform
+
+    runs-on: ${{ matrix.runs_on }}
 
     steps:
       - name: 检出代码
@@ -24,18 +55,29 @@ jobs:
           cache: "pip"
           cache-dependency-path: tools/requirements-build.txt
 
-      - name: 执行打包
+      - name: 执行 Windows 打包
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           pwsh -ExecutionPolicy Bypass -File .\scripts\build.ps1
 
-      - name: 生成发布压缩包
+      - name: 执行 Linux 打包
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          EXTRA_PIP_PACKAGES: git+https://github.com/MRHRTZ/pyooz.git
+        run: |
+          chmod +x ./scripts/build.sh
+          ./scripts/build.sh
+
+      - name: 生成 Windows 发布压缩包
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $tagName = "${{ github.event.release.tag_name }}"
-          $artifactName = "palworld-save-analysis-$tagName-win32-x64.zip"
+          $version = if ("${{ github.event_name }}" -eq "release") { "${{ github.event.release.tag_name }}" } else { "${{ github.run_number }}" }
+          $artifactName = "palworld-save-analysis-$version-win32-x64.zip"
           $artifactPath = Join-Path $env:RUNNER_TEMP $artifactName
           if (Test-Path $artifactPath) {
             Remove-Item $artifactPath -Force
@@ -47,13 +89,32 @@ jobs:
           "ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "ARTIFACT_PATH=$artifactPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: 生成 Linux 发布压缩包
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            version="${{ github.event.release.tag_name }}"
+          else
+            version="${{ github.run_number }}"
+          fi
+          artifact_name="palworld-save-analysis-${version}-linux-x86_64.tar.gz"
+          artifact_path="$RUNNER_TEMP/$artifact_name"
+          tar -C "./dist/linux-x86_64" -czf "$artifact_path" .
+          {
+            echo "ARTIFACT_NAME=$artifact_name"
+            echo "ARTIFACT_PATH=$artifact_path"
+          } >> "$GITHUB_ENV"
+
       - name: 上传到 Release
-        shell: pwsh
+        if: github.event_name == 'release'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = "Stop"
-          gh release upload "${{ github.event.release.tag_name }}" "$env:ARTIFACT_PATH" --clobber
+          set -euo pipefail
+          gh release upload "${{ github.event.release.tag_name }}" "$ARTIFACT_PATH" --clobber
 
       - name: 上传工作流产物
         uses: actions/upload-artifact@v4

@@ -10,7 +10,9 @@
 - 按 JSON 载荷更新玩家数据
 - 按 JSON 载荷更新公会与基地数据
 - 支持本地 Windows 打包
+- 支持本地 Linux 打包
 - 支持 GitHub Release 自动打包并上传发布资产
+- 支持手动触发工作流并选择构建平台
 
 ## 适用场景
 
@@ -23,14 +25,15 @@
 - `tools/palworld_save_analysis.py`：命令行入口，负责解析和操作分发
 - `tools/palworld_save_edit.py`：玩家、公会、世界配置的写入逻辑
 - `tools/palworld_save_tools/`：底层存档解析库与运行库
-- `scripts/build.ps1`：本地构建脚本
+- `scripts/build.ps1`：Windows 本地构建脚本
+- `scripts/build.sh`：Linux 本地构建脚本
 - `scripts/test-smoke.ps1`：本地烟雾测试脚本
 - `docs/usage.md`：补充使用文档
 - `.github/workflows/release-build.yml`：Release 自动打包流程
 
 ## 环境要求
 
-- Windows
+- Windows / Linux
 - Python 3.11
 - PowerShell 7，建议使用 `pwsh`
 
@@ -48,6 +51,20 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\build.ps1
 
 ```text
 dist\win32-x64\palworld-save-analysis.exe
+```
+
+### 1.1 Linux 本地构建
+
+在 Linux 环境执行：
+
+```bash
+EXTRA_PIP_PACKAGES="git+https://github.com/MRHRTZ/pyooz.git" ./scripts/build.sh
+```
+
+默认输出目录：
+
+```text
+dist/linux-x86_64/palworld-save-analysis
 ```
 
 ### 2. 解析存档
@@ -159,21 +176,27 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\test-smoke.ps1 `
 
 ## CI/CD 发布
 
-项目已内置 GitHub Actions 工作流，在创建并发布 GitHub Release 时自动触发打包。
+项目已内置 GitHub Actions 工作流，支持两种触发方式：
+
+- 创建并发布 GitHub Release 时自动触发
+- 在 Actions 页面手动触发，并选择 `windows`、`linux` 或 `both`
 
 工作流行为：
 
-- 使用 `windows-latest`
-- 安装 Python 3.11
-- 执行 `scripts/build.ps1`
-- 压缩 `dist/win32-x64/` 目录
-- 上传为当前 Release 的附件
+- Release 触发时自动构建 Windows 和 Linux
+- 手动触发时可按输入选择平台
+- Windows 使用 `scripts/build.ps1`
+- Linux 使用 `scripts/build.sh`
+- Linux 构建会额外安装 `pyooz`
+- 自动压缩构建目录
+- Release 触发时自动上传到当前 Release
 - 同时保留一份 Actions Artifact
 
 如果发布标签为 `v1.0.0`，产物名称类似：
 
 ```text
 palworld-save-analysis-v1.0.0-win32-x64.zip
+palworld-save-analysis-v1.0.0-linux-x86_64.tar.gz
 ```
 
 ## 开发说明
@@ -181,6 +204,7 @@ palworld-save-analysis-v1.0.0-win32-x64.zip
 - 构建过程中会生成 `.venv-build/`、`.build-tools/`、`dist/`、`test-output/`
 - 这些目录已经加入 `.gitignore`
 - 建议日常使用 `pwsh` 执行脚本，避免不同 PowerShell 版本带来的编码兼容问题
+- Linux 构建依赖可导入的 `ooz` 扩展，当前默认通过 `pyooz` 提供
 
 ## 注意事项
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib.util
 import os
+import platform
 import shutil
 from pathlib import Path
 
@@ -54,17 +56,63 @@ def copy_runtime_libs(vendor_dir: Path, output_dir: Path) -> None:
         shutil.copy2(windows_ooz, output_dir / "ooz.pyd")
 
 
-def ensure_required_runtime_files(vendor_dir: Path) -> None:
-    required_files = [
-        vendor_dir / "palworld_save_tools" / "lib" / "windows" / "ooz.pyd",
-    ]
+def resolve_platform_lib_dir_name() -> str | None:
+    if os.name == "nt":
+        return "windows"
 
-    missing_files = [str(file_path) for file_path in required_files if not file_path.exists()]
-    if missing_files:
-        raise FileNotFoundError(
-            "缺少幻兽帕鲁解析器必需运行库，请确认这些文件已存在并已纳入仓库版本管理: "
-            + ", ".join(missing_files)
-        )
+    if sys_platform_startswith("linux"):
+        machine = platform.machine().lower()
+        if "aarch64" in machine or "arm64" in machine:
+            return "linux_arm64"
+        if "x86_64" in machine or "amd64" in machine:
+            return "linux_x86_64"
+        raise RuntimeError(f"不支持的 Linux 架构: {machine}")
+
+    if sys_platform_startswith("darwin"):
+        machine = platform.machine().lower()
+        if "arm64" in machine:
+            return "mac_arm64"
+        if "x86_64" in machine or "amd64" in machine:
+            return "mac_x86_64"
+        raise RuntimeError(f"不支持的 macOS 架构: {machine}")
+
+    return None
+
+
+def sys_platform_startswith(name: str) -> bool:
+    return os.sys.platform.startswith(name)
+
+
+def has_importable_ooz() -> bool:
+    return importlib.util.find_spec("ooz") is not None
+
+
+def ensure_required_runtime_files(vendor_dir: Path) -> list[str]:
+    platform_lib_dir = resolve_platform_lib_dir_name()
+    hidden_imports: list[str] = []
+
+    if has_importable_ooz():
+        hidden_imports.append("ooz")
+
+    if not platform_lib_dir:
+        return hidden_imports
+
+    bundled_lib_dir = vendor_dir / "palworld_save_tools" / "lib" / platform_lib_dir
+    bundled_runtime_exists = bundled_lib_dir.exists() and any(
+        item.suffix in {".pyd", ".so", ".dll", ".dylib"} for item in bundled_lib_dir.rglob("*")
+    )
+
+    if bundled_runtime_exists:
+        return hidden_imports
+
+    if hidden_imports:
+        return hidden_imports
+
+    raise FileNotFoundError(
+        "缺少当前平台可用的 Ooz 运行库。"
+        f"已检查目录: {bundled_lib_dir}。"
+        "你可以补充对应平台的运行库文件，或先安装可导入的 ooz 扩展后再执行打包。"
+    )
 
 
 def build_parser(output_dir: Path, binary_name: str, clean: bool) -> Path:
@@ -75,7 +123,7 @@ def build_parser(output_dir: Path, binary_name: str, clean: bool) -> Path:
     build_root = project_dir / ".build-tools" / "palworld-parser" / "build"
     spec_root = project_dir / ".build-tools" / "palworld-parser" / "spec"
 
-    ensure_required_runtime_files(vendor_dir)
+    hidden_imports = ensure_required_runtime_files(vendor_dir)
 
     if clean and output_dir.exists():
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -108,6 +156,7 @@ def build_parser(output_dir: Path, binary_name: str, clean: bool) -> Path:
             str(spec_root),
             "--paths",
             str(vendor_dir),
+            *[arg for hidden_import in hidden_imports for arg in ("--hidden-import", hidden_import)],
             *add_data_args,
             *add_binary_args,
             str(entry_script),
