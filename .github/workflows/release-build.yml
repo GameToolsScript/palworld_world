@@ -1,0 +1,63 @@
+name: release-build
+
+on:
+  release:
+    types:
+      - published
+      - prereleased
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: tools/requirements-build.txt
+
+      - name: 执行打包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pwsh -ExecutionPolicy Bypass -File .\scripts\build.ps1
+
+      - name: 生成发布压缩包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tagName = "${{ github.event.release.tag_name }}"
+          $artifactName = "palworld-save-analysis-$tagName-win32-x64.zip"
+          $artifactPath = Join-Path $env:RUNNER_TEMP $artifactName
+          if (Test-Path $artifactPath) {
+            Remove-Item $artifactPath -Force
+          }
+          Compress-Archive `
+            -Path ".\dist\win32-x64\*" `
+            -DestinationPath $artifactPath `
+            -Force
+          "ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ARTIFACT_PATH=$artifactPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: 上传到 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          gh release upload "${{ github.event.release.tag_name }}" "$env:ARTIFACT_PATH" --clobber
+
+      - name: 上传工作流产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_PATH }}
+          if-no-files-found: error
